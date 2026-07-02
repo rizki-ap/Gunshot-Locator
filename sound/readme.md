@@ -8,11 +8,8 @@ From Zenodo:
 - ruger_1b_ch*.wav
 - glock3_ch*.wav
 
-glock_a283_*.wav :
+glock_a283_*.wav --- 2021-11-15T11:44:39.555918-05:00; Raspberry Pi	Zero W;	MiniDSP UMA-8 USB Mic Array V2;	Glock 17	9mm;	28.3425767;	-80.78142127; 50;	NORTH	EAST
 
-2021-11-15T11:44:39.555918-05:00; Raspberry Pi	Zero W;	MiniDSP UMA-8 USB Mic Array V2;	Glock 17	9mm;	28.3425767;	-80.78142127; 50;	NORTH	EAST
-
-ruger_04_1s_*.wav : 
-2021-11-22T09:59:51.692048-05:00; Raspberry Pi	Zero W;	MiniDSP UMA-8 USB Mic Array V2;	Ruger 556	.223 mm;	28.34258;	-80.78142; 50;	NORTH	EAST
+ruger_04_1s_*.wav --- 2021-11-22T09:59:51.692048-05:00; Raspberry Pi	Zero W;	MiniDSP UMA-8 USB Mic Array V2;	Ruger 556	.223 mm;	28.34258;	-80.78142; 50;	NORTH	EAST
 
 - collection setup : https://www.sciencedirect.com/science/article/pii/S235234092300210X
