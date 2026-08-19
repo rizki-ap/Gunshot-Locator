@@ -88,3 +88,30 @@ Mic Pin2 → C1(1µF) → [R1=R2=10k bias] → MCP6002 gain (Av≈11x)
 - [ ] SPI timing for Nios-V integration with the ADC
 - [ ] Gain headroom analysis for high-SPL gunshot transients (130–160dB) to avoid clipping
 - [ ] Recover/re-derive original multimeter readings if available, to cross-check JFET operating point
+
+using ohm-meter, probe : 
+black : casing , red: pin-A , read : 0ohm 
+black : casing , red: pin-B , read : 3.3Kohm 
+black : casing , red: pin-C , read : 33ohm 
+black : casing , red: pin-D , read : 30Kohm 
+red : casing , black: pin-A , read : 0ohm 
+red : casing , black: pin-B , read : 2.9Kohm 
+red : casing , black: pin-C , read : 33ohm 
+red : casing , black: pin-D , read : 30Kohm 
+black : pin-B, red : pin-C, read : 2.9Kohm
+
+Good, that confirms my assumption from before — the corrected data matches exactly what I used in the analysis. Table stands as-is:
+
+Pin	Forward (case→pin)	Reverse (pin→case)	Symmetric?	Interpretation
+A	0Ω	0Ω	Yes	Direct short to case → chassis GND
+B	3.3kΩ	2.9kΩ	No (diode-like)	Asymmetric → Gate (gate–channel junction)
+C	33Ω	33Ω	Yes	Pure resistive, no junction → Source (33Ω to GND, built into capsule)
+D	30kΩ	30kΩ	Yes	Ohmic, no junction → Drain, this is channel resistance rDS, not a discrete resistor
+
+Plus B↔C = 2.9kΩ, matching the B-reverse reading — confirms B and C sit on the same gate-channel junction path.
+
+Key conclusions, unchanged:
+
+Pin A = GND, Pin B = Gate, Pin C = Source (33Ω internal), Pin D = Drain (30kΩ is rDS, not a fixed resistor)
+You need an external Rbias from V+ to Pin D — there's no internal drain resistor to rely on. This corrects the earlier assumption of a "3kΩ drain resistor" in the reference doc.
+The 33Ω source resistor is quite low for typical source-follower designs (most run 1kΩ–4.7kΩ) — worth keeping in mind when sizing bias current.
