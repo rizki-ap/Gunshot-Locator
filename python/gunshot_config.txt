@@ -1,0 +1,137 @@
+Yes. A simple approach is to put your parameters in a **config file**, then have Python read them.
+
+### Option 1 — Simple `key=value` config file
+
+Create `config.txt`:
+
+```text
+filename=test.wav
+sampling_rate=48000
+sensor_distance=1.5
+speed_of_sound=343.0
+```
+
+Python:
+
+```python
+config = {}
+
+with open("config.txt", "r") as f:
+    for line in f:
+        line = line.strip()
+
+        # Skip blank lines and comments
+        if not line or line.startswith("#"):
+            continue
+
+        key, value = line.split("=", 1)
+        config[key.strip()] = value.strip()
+
+filename = config["filename"]
+sampling_rate = int(config["sampling_rate"])
+sensor_distance = float(config["sensor_distance"])
+speed_of_sound = float(config["speed_of_sound"])
+
+print(filename)
+print(sampling_rate)
+print(sensor_distance)
+print(speed_of_sound)
+```
+
+Run:
+
+```bash
+python3 myscript.py
+```
+
+---
+
+### Option 2 — Pass the config filename as an argument
+
+This is usually better if you have multiple configurations.
+
+Run:
+
+```bash
+python3 myscript.py config.txt
+```
+
+Python:
+
+```python
+import sys
+
+config_file = sys.argv[1]
+
+config = {}
+
+with open(config_file, "r") as f:
+    for line in f:
+        line = line.strip()
+
+        if not line or line.startswith("#"):
+            continue
+
+        key, value = line.split("=", 1)
+        config[key.strip()] = value.strip()
+
+filename = config["filename"]
+sampling_rate = int(config["sampling_rate"])
+sensor_distance = float(config["sensor_distance"])
+
+print("File:", filename)
+print("Sampling rate:", sampling_rate)
+print("Distance:", sensor_distance)
+```
+
+You can then have:
+
+```text
+config1.txt
+config2.txt
+config3.txt
+```
+
+and run whichever one you want:
+
+```bash
+python3 myscript.py config2.txt
+```
+
+### Option 3 — Use Python's built-in `configparser`
+
+For a more structured configuration:
+
+`config.ini`:
+
+```ini
+[signal]
+filename = test.wav
+sampling_rate = 48000
+
+[sensor]
+distance = 1.5
+speed_of_sound = 343.0
+```
+
+Python:
+
+```python
+import configparser
+
+config = configparser.ConfigParser()
+config.read("config.ini")
+
+filename = config["signal"]["filename"]
+sampling_rate = config["signal"].getint("sampling_rate")
+
+distance = config["sensor"].getfloat("distance")
+speed_of_sound = config["sensor"].getfloat("speed_of_sound")
+
+print(filename)
+print(sampling_rate)
+print(distance)
+print(speed_of_sound)
+```
+
+For your **GCC-PHAT / sensor localization scripts**, I'd recommend **Option 3 (`configparser`)**, especially once you have parameters such as sensor positions, sampling rate, FFT size, speed of sound, and TDOA settings.
