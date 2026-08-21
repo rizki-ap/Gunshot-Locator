@@ -5,9 +5,9 @@ Python Algorithm :
     -  gunshot_generate_clean.py -->
     -  config.ini 
   - usage :
-      python gunshot_generate_clean.py                # uses config.ini in cwd
-      python gunshot_generate_clean.py my_config.ini
-      python gunshot_generate_clean.py my_config.ini -o my_shot
+    - python gunshot_generate_clean.py                # uses config.ini in cwd
+    - python gunshot_generate_clean.py my_config.ini
+    - python gunshot_generate_clean.py my_config.ini -o my_shot
   - output :
     - 
 Other old ipynb : /old
