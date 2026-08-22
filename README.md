@@ -18,8 +18,14 @@ Target Implementation Component Data :
 - in /device
 
 Python Algorithm : (/python)
-- physics parameter setup: gunshot_physic.py input:physic_config.ini
-- generate clean gunshot signal : gunshot_generate_clean.py ; input:config.ini ; output:*_4ch_clean.wav & *.json
-- adding noise to signal : gunshot_add_noise.py ; input:gunshot_clean_4ch.wav ; output:gunshot_noisy_4ch.wav & *.json
-- detecting signal tdoa : gunshot_detect_tdoa.py ; input:gunshot_noisy_4ch.wav + *.json
-- computing shooter location : gunshot_shooter_locator.py
+- gen_config.ini : all parameter needed to configure generation of real gunshot signal
+- gs_gen_physic.py : physics parameter setup, 
+- gs_gen_clean_signal.py : generate clean gunshot signal in multichannel wav file and *.json 
+- gs_gen_add_noise.py : adding noise to signal, create multichannel wav file and *.json
+- gs_gen_apply_adc.py : adding noise in mics, afe and adc.
+- gs_det_signal_prepare.py :detecting sw & mb peak, normalization
+- gs_det_tdoa.py :doing gcc-phat algoritm, create 6 pair tDoA
+- gs_det_shooter_locator.py : computing hyperboloid equation, determine shooter location
+- gs_det_classify_bullet.py : determine bullet property, mach, caliber, etc
+- util_get_accoustic_param.py : extracting accoustic parameter, include noise from wav file
+- util_plot_signal.py : plotting signal in multichannel wav file
