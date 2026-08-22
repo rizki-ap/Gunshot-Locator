@@ -23,6 +23,7 @@ Python Algorithm : (/python)
 - gs_gen_clean_signal.py : generate clean gunshot signal in multichannel wav file and *.json 
 - gs_gen_add_noise.py : adding noise to signal, create multichannel wav file and *.json
 - gs_gen_apply_adc.py : adding noise in mics, afe and adc.
+- det_config.ini : all parameter needed to configure detection gunshot shooter origin
 - gs_det_signal_prepare.py :detecting sw & mb peak, normalization
 - gs_det_tdoa.py :doing gcc-phat algoritm, create 6 pair tDoA
 - gs_det_shooter_locator.py : computing hyperboloid equation, determine shooter location
