@@ -30,3 +30,7 @@ Python Algorithm : (/python)
 - gs_det_classify_bullet.py : determine bullet property, mach, caliber, etc
 - util_get_accoustic_param.py : extracting accoustic parameter, include noise from wav file
 - util_plot_signal.py : plotting signal in multichannel wav file
+
+FPGA rtl implementation :
+- in /verilog
+
