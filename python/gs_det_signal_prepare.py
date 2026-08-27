@@ -14,6 +14,18 @@ Two-stage detector (adapted from the validated detect_events() approach):
      onset, looking for the first sustained rise above
      mb_energy_threshold_mult x noise_RMS^2.
 
+Optional Stage-1 deconvolution ([deconvolution] enabled=true): if a
+calibration recording (the array's own response to a known sweep, played
+once at install time) is available, its per-channel room response is
+estimated via regularized deconvolution and used to deconvolve the live
+signal BEFORE onset detection. This is the calibration-sweep approach that
+was validated (in earlier work this pipeline is derived from) to recover
+sub-10us TDOA even in the RT60-vs-event-gap overlap case that otherwise
+breaks GCC-PHAT entirely -- legitimate for a fixed-position sensor (the
+room doesn't change shot-to-shot), and does NOT require or use any
+generation-block ground truth: only a real (or, for testing, simulated)
+recording of the array's own response to a known test signal.
+
 Usage
 -----
   python gs_det_signal_prepare.py input.wav                     # det_config.ini
@@ -24,7 +36,8 @@ Output
 ------
   <output>_prepared.wav   multichannel, float32, peak-normalized copy of the
                            input (downstream stages load this, not the
-                           original file, so normalization is consistent)
+                           original file, so normalization is consistent) --
+                           deconvolved first, if [deconvolution] is enabled
   <output>_prepared.json  per-channel SW/MB onset times + amplitudes, and
                            whether each channel's MB detection was reliable
 """
@@ -37,6 +50,82 @@ from datetime import datetime, timezone
 
 import numpy as np
 from scipy.io import wavfile
+from scipy.signal import chirp as make_chirp
+
+
+def make_calibration_sweep(fs, f0, f1, duration):
+    """The KNOWN test signal played during calibration -- must match
+    whatever was actually played when the calibration recording was made
+    (same f0/f1/duration/fs, all in det_config.ini, not derived from
+    anything generation-side)."""
+    t = np.arange(0, duration, 1.0 / fs)
+    return make_chirp(t, f0=f0, t1=duration, f1=f1, method="logarithmic")
+
+
+def estimate_rir_from_calibration(sweep, recorded, rir_len, reg=1e-2):
+    """Regularized frequency-domain deconvolution: given the known sweep and
+    the array's recorded response to it, estimate that channel's room
+    impulse response. Standard swept-sine RIR measurement technique."""
+    n_fft = len(recorded)
+    Rec = np.fft.rfft(recorded, n=n_fft)
+    Sw = np.fft.rfft(sweep, n=n_fft)
+    G = Rec * np.conj(Sw) / (np.abs(Sw) ** 2 + reg * np.max(np.abs(Sw) ** 2))
+    rir_full = np.fft.irfft(G, n=n_fft)
+    return rir_full[:rir_len]
+
+
+def wiener_deconvolve(y, rir, reg=1e-2):
+    """Regularized inverse filter: remove the estimated room response from a
+    live recording. Same technique used to estimate the RIR above, applied
+    in reverse."""
+    n = len(y)
+    n_fft = n + len(rir) - 1
+    Y = np.fft.rfft(y, n=n_fft)
+    H = np.fft.rfft(rir, n=n_fft)
+    H_mag2 = np.abs(H) ** 2
+    G = np.conj(H) / (H_mag2 + reg * np.max(H_mag2))
+    x_hat = np.fft.irfft(Y * G, n=n_fft)
+    return x_hat[:n]
+
+
+def apply_calibration_deconvolution(signals, fs, decon_cfg):
+    """Load the calibration recording, estimate each channel's RIR from it,
+    and deconvolve the corresponding live channel. Returns the deconvolved
+    signals list, or the original signals unchanged (with a warning) if the
+    calibration file can't be used."""
+    try:
+        cal_fs, cal_data = wavfile.read(decon_cfg["calibration_wav"])
+    except FileNotFoundError:
+        print(f"WARNING: calibration_wav '{decon_cfg['calibration_wav']}' not found -- "
+              f"skipping deconvolution, using raw signal.", file=sys.stderr)
+        return signals
+    if cal_data.ndim == 1:
+        cal_data = cal_data[:, None]
+    if cal_fs != fs:
+        print(f"WARNING: calibration recording fs ({cal_fs}) != input fs ({fs}) -- "
+              f"skipping deconvolution.", file=sys.stderr)
+        return signals
+    if cal_data.shape[1] != len(signals):
+        print(f"WARNING: calibration recording has {cal_data.shape[1]} channels, "
+              f"input has {len(signals)} -- skipping deconvolution.", file=sys.stderr)
+        return signals
+
+    is_int = np.issubdtype(cal_data.dtype, np.integer)
+    full_scale = float(np.iinfo(cal_data.dtype).max) if is_int else 1.0
+    cal_signals = [cal_data[:, i].astype(np.float64) / full_scale for i in range(cal_data.shape[1])]
+
+    sweep = make_calibration_sweep(fs, decon_cfg["sweep_f0_hz"], decon_cfg["sweep_f1_hz"],
+                                    decon_cfg["sweep_duration_s"])
+    rir_len = int(decon_cfg["rir_length_s"] * fs)
+
+    print(f"[Det Stage 1] Deconvolving with calibration recording "
+          f"'{decon_cfg['calibration_wav']}' ({len(signals)} channels)...")
+    deconvolved = []
+    for i in range(len(signals)):
+        rir_est = estimate_rir_from_calibration(sweep, cal_signals[i], rir_len,
+                                                  reg=decon_cfg["regularization"])
+        deconvolved.append(wiener_deconvolve(signals[i], rir_est, reg=decon_cfg["regularization"]))
+    return deconvolved
 
 
 def load_det_config(path):
@@ -52,6 +141,10 @@ def load_det_config(path):
                                       "5.56_NATO_L": "0.023", "5.56_NATO_dP0_sw": "7.5", "5.56_NATO_b0_sw": "50.0",
                                       "7.62_NATO_L": "0.028", "7.62_NATO_dP0_sw": "7.5", "7.62_NATO_b0_sw": "50.0"},
         "calibration": {"assumed_peak_pa_at_full_scale": "175.0"},
+        "deconvolution": {"enabled": "false", "calibration_wav": "",
+                          "sweep_f0_hz": "40.0", "sweep_f1_hz": "20000.0",
+                          "sweep_duration_s": "1.0", "rir_length_s": "2.0",
+                          "regularization": "0.01"},
         "output": {"basename": "det_result"},
     })
     if path is not None:
@@ -83,6 +176,13 @@ def load_det_config(path):
                      max_lag_s=cp.getfloat("tdoa", "max_lag_s")),
         "bullet_reference_library": bullet_library,
         "calibration": dict(assumed_peak_pa_at_full_scale=cp.getfloat("calibration", "assumed_peak_pa_at_full_scale")),
+        "deconvolution": dict(enabled=cp.getboolean("deconvolution", "enabled"),
+                               calibration_wav=cp.get("deconvolution", "calibration_wav"),
+                               sweep_f0_hz=cp.getfloat("deconvolution", "sweep_f0_hz"),
+                               sweep_f1_hz=cp.getfloat("deconvolution", "sweep_f1_hz"),
+                               sweep_duration_s=cp.getfloat("deconvolution", "sweep_duration_s"),
+                               rir_length_s=cp.getfloat("deconvolution", "rir_length_s"),
+                               regularization=cp.getfloat("deconvolution", "regularization")),
         "output": dict(basename=cp.get("output", "basename")),
     }
 
@@ -207,11 +307,21 @@ def main():
                          help="Path to detection .ini config (default: det_config.ini)")
     parser.add_argument("-o", "--output", default=None,
                          help="Output basename (overrides output.basename in config)")
+    parser.add_argument("--calibration-wav", default=None,
+                         help="Path to a calibration recording (overrides det_config.ini's "
+                              "deconvolution.calibration_wav). A calibration recording is the "
+                              "array's own response to a known log-sweep played at install time "
+                              "(same sweep parameters as det_config.ini [deconvolution]). "
+                              "Enables room-response deconvolution before onset detection -- "
+                              "the single most effective fix for reverb corrupting TDOA.")
     args = parser.parse_args()
 
     cfg = load_det_config(args.config)
     if args.output:
         cfg["output"]["basename"] = args.output
+    if args.calibration_wav:
+        cfg["deconvolution"]["enabled"] = True
+        cfg["deconvolution"]["calibration_wav"] = args.calibration_wav
 
     fs, data = wavfile.read(args.input_wav)
     if data.ndim == 1:
@@ -221,16 +331,41 @@ def main():
     full_scale = float(np.iinfo(data.dtype).max) if is_int else 1.0
     signals = [data[:, i].astype(np.float64) / full_scale for i in range(n_channels)]
 
+    # --- Optional deconvolution (before normalization and onset detection) ----
+    decon_applied = False
+    if cfg["deconvolution"]["enabled"]:
+        if not cfg["deconvolution"]["calibration_wav"]:
+            print("[Det Stage 1] WARNING: deconvolution.enabled=true but no "
+                  "calibration_wav set -- skipping deconvolution.", file=sys.stderr)
+        else:
+            signals = apply_calibration_deconvolution(signals, fs, cfg["deconvolution"])
+            decon_applied = True
+
     peak = max(np.abs(s).max() for s in signals)
     normalized = [s / peak if peak > 0 else s for s in signals]
 
     t_axis = np.arange(len(normalized[0])) / fs
     det = cfg["detection"]
 
+    decon_note = " (with room deconvolution)" if decon_applied else ""
     print(f"[Det Stage 1] Detecting SW/MB onsets in {args.input_wav} "
-          f"({n_channels} channels, {fs} Hz) -- BLIND, no generation ground truth used")
+          f"({n_channels} channels, {fs} Hz){decon_note} -- BLIND")
+
+    # --- SW consistency check: do all channels agree on direction? -----------
+    # A strongly inconsistent set (cross-channel TDOA spread >> expected max
+    # from array geometry) is a sign the SW detection caught reverb or noise
+    # rather than the real wavefront -- flagged here so downstream stages can
+    # weight accordingly, rather than silently computing a wrong bearing.
+    def sw_consistency_flag(t_sw_list, fs_rate, l_array, c):
+        valid = [t for t in t_sw_list if t is not None]
+        if len(valid) < 2:
+            return False, float("nan")
+        spread_us = (max(valid) - min(valid)) * 1e6
+        max_expected_us = l_array / c * 1e6   # aperture / c = max possible TDOA
+        return spread_us > 3 * max_expected_us, spread_us
 
     per_channel = []
+    t_sw_all = []
     for i in range(n_channels):
         result = detect_events(normalized[i], t_axis, fs,
                                 det["sw_threshold_mult"], det["mb_energy_threshold_mult"],
@@ -238,11 +373,22 @@ def main():
         if result is None:
             print(f"  Ch{i}: SW NOT DETECTED", file=sys.stderr)
             per_channel.append(dict(channel=i, sw_detected=False))
+            t_sw_all.append(None)
             continue
         flag = "" if result["mb_reliable"] else "  <-- MB UNRELIABLE"
         print(f"  Ch{i}: t_sw={result['t_sw']:.5f}s  t_mb={result['t_mb']}s{flag}")
         per_channel.append(dict(channel=i, sw_detected=True, mb_detected=result["t_mb"] is not None,
                                  **result))
+        t_sw_all.append(result["t_sw"])
+
+    sw_inconsistent, sw_spread_us = sw_consistency_flag(
+        t_sw_all, fs, cfg["geometry"]["l_array"], cfg["physics"]["speed_of_sound"])
+    if sw_inconsistent:
+        print(f"  WARNING: SW spread across channels = {sw_spread_us:.1f} us, "
+              f"exceeds 3x the array's maximum possible TDOA "
+              f"({cfg['geometry']['l_array']/cfg['physics']['speed_of_sound']*1e6:.1f} us) -- "
+              f"SW detection may have caught reverb or noise, not the true wavefront. "
+              f"Consider enabling [deconvolution] in det_config.ini.")
 
     wav_path = f"{cfg['output']['basename']}_prepared.wav"
     json_path = f"{cfg['output']['basename']}_prepared.json"
@@ -255,10 +401,13 @@ def main():
         stage="signal_prepared",
         source_wav=args.input_wav,
         prepared_wav=wav_path,
+        deconvolution_applied=decon_applied,
         sample_rate_hz=fs,
         n_channels=n_channels,
         n_samples=len(normalized[0]),
         normalization_peak=float(peak),
+        sw_spread_us=float(sw_spread_us),
+        sw_consistency_flag=bool(sw_inconsistent),
         config_used=cfg,
         per_channel=per_channel,
     )
