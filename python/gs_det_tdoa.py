@@ -45,6 +45,28 @@ def gcc_phat(x1, x2, fs, interp_factor=16, max_lag_s=0.001):
     return float(lags[mask][idx])
 
 
+def peak_timing_tdoa(signal_ref, signal_ch, t_axis, t_onset_ref, t_onset_ch,
+                      fs, search_start_s=0.0, search_end_s=0.0005):
+    """Direct impulse-peak TDOA estimator -- used instead of GCC-PHAT when
+    deconvolution has been applied.
+
+    Searches for the peak in [t_onset + search_start_s, t_onset + search_end_s]
+    per channel. For the shockwave (impulse-like N-wave), use start≈0, end≈0.5ms.
+    For the muzzle blast (Friedlander), the onset detection finds the rising edge,
+    but the actual pressure peak arrives ~t_pos later -- use start≈0.5ms, end≈3ms."""
+    def find_peak_time(sig, t_center):
+        lo = np.searchsorted(t_axis, t_center + search_start_s)
+        hi = np.searchsorted(t_axis, t_center + search_end_s)
+        hi = min(hi, len(sig))
+        if lo >= hi:
+            return t_center + search_start_s
+        return float(t_axis[lo + np.argmax(np.abs(sig[lo:hi]))])
+
+    t_peak_ref = find_peak_time(signal_ref, t_onset_ref)
+    t_peak_ch  = find_peak_time(signal_ch,  t_onset_ch)
+    return t_peak_ch - t_peak_ref
+
+
 def extract_window(signal, t_axis, t_center, t_pre, t_post):
     mask = (t_axis >= t_center - t_pre) & (t_axis <= t_center + t_post)
     return signal[mask]
@@ -92,23 +114,50 @@ def main():
 
     tw = cfg["tdoa"]
     pairs = list(combinations(range(n_channels), 2))
+    use_peak_timing = prep.get("deconvolution_applied", False)
+    method_label = "peak-timing (deconvolved signal)" if use_peak_timing else "GCC-PHAT"
+    print(f"[Det Stage 2] TDOA method: {method_label}")
 
-    sw_windows = [extract_window(signals[i], t_axis, ref["t_sw"],
-                                  tw["sw_window_pre_s"], tw["sw_window_post_s"]) for i in range(n_channels)]
     tdoa_sw = {}
     for (a, b) in pairs:
-        tau = gcc_phat(sw_windows[a], sw_windows[b], fs,
-                        interp_factor=tw["interp_factor"], max_lag_s=tw["max_lag_s"])
+        if use_peak_timing:
+            ch_a = prep["per_channel"][a]
+            ch_b = prep["per_channel"][b]
+            t_sw_a = ch_a.get("t_sw") if ch_a.get("sw_detected") else ref["t_sw"]
+            t_sw_b = ch_b.get("t_sw") if ch_b.get("sw_detected") else ref["t_sw"]
+            tau = peak_timing_tdoa(signals[a], signals[b], t_axis,
+                                    t_sw_a, t_sw_b, fs,
+                                    search_start_s=-0.0001, search_end_s=0.0005)
+        else:
+            sw_wins_a = extract_window(signals[a], t_axis, ref["t_sw"],
+                                        tw["sw_window_pre_s"], tw["sw_window_post_s"])
+            sw_wins_b = extract_window(signals[b], t_axis, ref["t_sw"],
+                                        tw["sw_window_pre_s"], tw["sw_window_post_s"])
+            tau = gcc_phat(sw_wins_a, sw_wins_b, fs,
+                            interp_factor=tw["interp_factor"], max_lag_s=tw["max_lag_s"])
         tdoa_sw[f"{a},{b}"] = tau
 
     tdoa_mb = {}
     mb_used = ref.get("mb_detected") and ref.get("mb_reliable")
     if mb_used:
-        mb_windows = [extract_window(signals[i], t_axis, ref["t_mb"],
-                                      tw["mb_window_pre_s"], tw["mb_window_post_s"]) for i in range(n_channels)]
         for (a, b) in pairs:
-            tau = gcc_phat(mb_windows[a], mb_windows[b], fs,
-                            interp_factor=tw["interp_factor"], max_lag_s=tw["max_lag_s"])
+            if use_peak_timing:
+                ch_a = prep["per_channel"][a]
+                ch_b = prep["per_channel"][b]
+                t_mb_a = ch_a.get("t_mb") if ch_a.get("mb_detected") else ref["t_mb"]
+                t_mb_b = ch_b.get("t_mb") if ch_b.get("mb_detected") else ref["t_mb"]
+                # MB: search from 0.5ms to 3ms AFTER onset -- the Friedlander peak
+                # arrives after the onset threshold crossing, not right at it.
+                tau = peak_timing_tdoa(signals[a], signals[b], t_axis,
+                                        t_mb_a, t_mb_b, fs,
+                                        search_start_s=0.0005, search_end_s=0.003)
+            else:
+                mb_wins_a = extract_window(signals[a], t_axis, ref["t_mb"],
+                                            tw["mb_window_pre_s"], tw["mb_window_post_s"])
+                mb_wins_b = extract_window(signals[b], t_axis, ref["t_mb"],
+                                            tw["mb_window_pre_s"], tw["mb_window_post_s"])
+                tau = gcc_phat(mb_wins_a, mb_wins_b, fs,
+                                interp_factor=tw["interp_factor"], max_lag_s=tw["max_lag_s"])
             tdoa_mb[f"{a},{b}"] = tau
     else:
         print("[Det Stage 2] WARNING: reference channel's MB detection wasn't reliable -- "
